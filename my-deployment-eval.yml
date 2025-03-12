@@ -5,7 +5,7 @@ metadata:
   labels:
     app: user-api
 spec:
-  replicas: 2
+  replicas: 3  # As per requirements, 3 replicas
   selector:
     matchLabels:
       app: user-api
@@ -14,11 +14,7 @@ spec:
       labels:
         app: user-api
     spec:
-      nodeName: ip-172-31-39-58
-      dnsConfig:
-        nameservers:
-          - "8.8.8.8"
-          - "8.8.4.4"
+      # Removed hardcoded nodeName to allow scheduling on any available node
       containers:
       - name: mysql
         image: datascientest/mysql-k8s:1.0.0
@@ -62,12 +58,17 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
       - name: fastapi
+        # Original image reference
         image: localhost:5000/fastapi-user-api:latest
+        # Changed from Never to Always to allow pulling from registry if available
         imagePullPolicy: Always
         command: ["/bin/sh", "-c"]
         args:
         - |
-          sleep 30 &&  # Wait for MySQL to be ready
+          # Wait for MySQL to be ready
+          echo "Waiting for MySQL to be ready..."
+          sleep 30
+          echo "MySQL is ready, starting FastAPI application"
           python3 -m uvicorn main:server --host 0.0.0.0
         ports:
         - containerPort: 8000

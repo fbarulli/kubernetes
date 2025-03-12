@@ -42,11 +42,41 @@ docker build -t fastapi-user-api:latest . || {
 }
 log_operation "Build" "SUCCESS" "FastAPI image built successfully"
 
+# Determine if we are using minikube
+if command -v minikube &> /dev/null && minikube status >/dev/null 2>&1; then
+    print_status "Detected minikube environment"
+    eval $(minikube docker-env)
+    print_status "Building image directly in minikube's Docker"
+    docker build -t fastapi-user-api:latest . || {
+        print_error "Failed to build image in minikube"
+        exit 1
+    }
+    log_operation "Build" "SUCCESS" "Image built in minikube's Docker"
+else
+    # Try to use a local registry if available
+    if docker ps | grep -q "registry:2"; then
+        print_status "Local registry detected, tagging and pushing image"
+        docker tag fastapi-user-api:latest localhost:5000/fastapi-user-api:latest
+        docker push localhost:5000/fastapi-user-api:latest || {
+            print_error "Failed to push to local registry"
+            log_operation "Push" "WARNING" "Could not push to local registry"
+        }
+        # Update the deployment file to use the registry image
+        print_status "Updating deployment to use registry image"
+        sed -i 's|image: fastapi-user-api:latest|image: localhost:5000/fastapi-user-api:latest|g' my-deployment-eval.yml
+    else
+        print_status "No local registry detected, will rely on local image"
+        # Make sure the deployment uses the local image
+        sed -i 's|image: localhost:5000/fastapi-user-api:latest|image: fastapi-user-api:latest|g' my-deployment-eval.yml
+    fi
+fi
+
 # Clean up any existing resources
 print_status "Cleaning up existing resources"
 kubectl delete deployment api-mysql-deployment --ignore-not-found=true
 kubectl delete service user-api-service --ignore-not-found=true
 kubectl delete ingress user-api-ingress --ignore-not-found=true
+kubectl delete configmap mysql-init-scripts --ignore-not-found=true
 log_operation "Cleanup" "SUCCESS" "Existing resources removed"
 
 # Create ConfigMap for MySQL initialization
@@ -117,18 +147,24 @@ while [ $SECONDS -lt $end ]; do
     kubectl get pods -l app=user-api
     
     if [ "$ready" == "$total" ] && [ "$ready" != "0" ]; then
-        print_status "All pods are ready!"
+        print_status "All pods are ready! ($ready/$total)"
         log_operation "Deployment" "SUCCESS" "All pods are ready"
         break
     fi
     
-    # Show logs from the first pod
-    POD=$(kubectl get pod -l app=user-api -o name | head -1)
-    if [ ! -z "$POD" ]; then
+    # Get all pods and show details for the first one
+    PODS=$(kubectl get pod -l app=user-api -o name)
+    if [ ! -z "$PODS" ]; then
+        POD=$(echo "$PODS" | head -1)
+        echo -e "\nPod Details for $POD:"
+        # Fixed this line - using $POD directly instead of adding "pod" prefix
+        kubectl describe $POD | grep -A 5 "Events:"
+        
         echo -e "\nMySQL Logs:"
-        kubectl logs $POD -c mysql --tail=5
+        kubectl logs $POD -c mysql --tail=5 2>/dev/null || echo "No logs available yet"
+        
         echo -e "\nFastAPI Logs:"
-        kubectl logs $POD -c fastapi --tail=5
+        kubectl logs $POD -c fastapi --tail=5 2>/dev/null || echo "No logs available yet"
     fi
     
     echo -e "\nWaiting 10 seconds before next check..."
