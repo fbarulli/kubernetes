@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, EmailStr, validator
 from sqlalchemy.engine import create_engine
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import text
 
 # Configure logging
 logging.basicConfig(
@@ -69,7 +70,7 @@ async def get_users():
     """Retrieve all users from the database"""
     try:
         with mysql_engine.connect() as connection:
-            results = connection.execute('SELECT * FROM Users;')
+            results = connection.execute(text('SELECT * FROM Users;'))
             users = [
                 User(
                     user_id=row[0],
@@ -80,7 +81,8 @@ async def get_users():
             logger.info(f"Successfully retrieved {len(users)} users")
             return users
     except SQLAlchemyError as e:
-        logger.error(f"Database error when fetching users: {str(e)}")
+        error_msg = f"Database error when fetching users: {str(e)}\nType: {type(e)}\nArgs: {e.args}"
+        logger.error(error_msg)
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Database error occurred")
     except Exception as e:
